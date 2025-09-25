@@ -66,7 +66,7 @@ gclient sync
 
 if [ "$VERSION" == "11.8.172" ]; then 
   node $GITHUB_WORKSPACE/node-script/do-gitpatch.js -p $GITHUB_WORKSPACE/patches/remove_uchar_include_v11.8.172.patch
-  node $GITHUB_WORKSPACE/node-script/do-gitpatch.js -p $GITHUB_WORKSPACE/patches/enable_wee8_v11.8.172.patch
+#  node $GITHUB_WORKSPACE/node-script/do-gitpatch.js -p $GITHUB_WORKSPACE/patches/enable_wee8_v11.8.172.patch
 fi
 
 CXX_SETTING="use_custom_libcxx=false"
@@ -95,7 +95,7 @@ else
 fi
 
 ninja -C out.gn/x64.release -t clean
-ninja -v -C out.gn/x64.release wee8
+ninja -v -C out.gn/x64.release v8
 
 mkdir -p output/v8/Lib/Linux
 if [ "$NEW_WRAP" == "with_new_wrap" ]; then 
