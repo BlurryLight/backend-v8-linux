@@ -7,10 +7,10 @@ index dd97c4f922c..ed2cfa6cdda 100644
  #
  
 -if (v8_monolithic) {
-+#if (v8_monolithic) {
++if (v8_monolithic) {
    assert(!is_component_build,
           "Set `is_component_build = false` for v8_monolithic.")
- 
+} 
    # Using external startup data would produce separate files.
    assert(!v8_use_external_startup_data,
           "Set `v8_use_external_startup_data = false` for v8_monolithic.")

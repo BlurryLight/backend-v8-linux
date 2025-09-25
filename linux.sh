@@ -105,4 +105,6 @@ cp out.gn/x64.release/obj/libwee8.a output/v8/Lib/Linux/
 mkdir -p output/v8/Bin/Linux
 find out.gn/ -type f -name v8cc -exec cp "{}" output/v8/Bin/Linux \;
 find out.gn/ -type f -name mksnapshot -exec cp "{}" output/v8/Bin/Linux \;
+find out.gn/ -type f -name "*.so" -exec cp "{}" output/v8/Bin/Linux \;
+find out.gn/ -type f -name "*.a" -exec cp "{}" output/v8/Bin/Linux \;
 
