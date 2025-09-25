@@ -9,6 +9,11 @@ function addV8CC() {
     const filepath = path.join(v8_path, 'BUILD.gn')
     console.log(`add ${target_cpu} v8cc to ${filepath} ...`);
     let context = fs.readFileSync(filepath, 'utf-8');
+    const v8cc_start = context.indexOf('v8_executable("v8cc") {');
+    if (v8cc_start > 0) {
+      console.log("v8cc already exists, skip.");
+      return;
+    }
     
     let v8cc_target = `
 v8_executable("v8cc") {
