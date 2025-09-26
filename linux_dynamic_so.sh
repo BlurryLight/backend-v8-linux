@@ -103,9 +103,14 @@ if [ "$NEW_WRAP" == "with_new_wrap" ]; then
   bash $GITHUB_WORKSPACE/rename_symbols_posix.sh x64 output/v8/Lib/Linux/
 fi
 
-exit 0
 cp out.gn/x64.release/obj/libwee8.a output/v8/Lib/Linux/
+find out.gn/ -type f -name "*.so" -exec cp "{}" output/v8/Lib/Linux \;
+find out.gn/ -type f -name torque -exec cp "{}" output/v8/Lib/Linux \;
+find out.gn/ -type f -name bytecode_builtins_list_generator -exec cp "{}" output/v8/Lib/Linux \;
+
 mkdir -p output/v8/Bin/Linux
 find out.gn/ -type f -name v8cc -exec cp "{}" output/v8/Bin/Linux \;
 find out.gn/ -type f -name mksnapshot -exec cp "{}" output/v8/Bin/Linux \;
 
+# Package the output/v8 directory into a tar.gz file
+tar -cvzf output_v8.tar.gz output/v8
