@@ -2,7 +2,8 @@
 
 VERSION=11.8.172
 NEW_WRAP=""
-GITHUB_WORKSPACE=/home/panda/repo/backend-v8
+# GITHUB_WORKSPACE=/home/panda/code/backend-v8-linux
+GITHUB_WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 
 if [ "$VERSION" == "10.6.194" -o "$VERSION" == "11.8.172" ]; then 
