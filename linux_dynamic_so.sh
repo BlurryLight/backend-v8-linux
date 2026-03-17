@@ -227,7 +227,7 @@ node $GITHUB_WORKSPACE/node-script/patchs.js . $VERSION $NEW_WRAP
 
 echo "=====[ Building V8 ]====="
 
-gn gen "$BUILD_DIR" --args="is_debug=$IS_DEBUG v8_enable_i18n_support=false v8_use_snapshot=true v8_use_external_startup_data=false is_component_build=true strip_debug_info=$STRIP_DEBUG_INFO symbol_level=$SYMBOL_LEVEL libcxx_abi_unstable=false v8_enable_pointer_compression=false v8_enable_sandbox=false $CXX_SETTING is_clang=true v8_enable_maglev=$MAGLEV_ARG v8_enable_webassembly=false"
+gn gen "$BUILD_DIR" --args="is_debug=$IS_DEBUG v8_enable_i18n_support=false v8_use_snapshot=true v8_use_external_startup_data=false is_component_build=true strip_debug_info=$STRIP_DEBUG_INFO symbol_level=$SYMBOL_LEVEL v8_enable_pointer_compression=false v8_enable_sandbox=false $CXX_SETTING is_clang=true v8_enable_maglev=$MAGLEV_ARG v8_enable_webassembly=false"
 
 if [ "$DO_CLEAN" = true ]; then
     ninja -C "$BUILD_DIR" -t clean

@@ -1,6 +1,15 @@
 const fs = require('fs');
 const path = require('path');
 
+function writeIfChanged(pathname, context) {
+    const existing = fs.readFileSync(pathname, 'utf-8');
+    if (existing === context) {
+        return false;
+    }
+    fs.writeFileSync(pathname, context);
+    return true;
+}
+
 function dedupeOccurrences(context, needle) {
     const first = context.indexOf(needle);
     if (first === -1) {
@@ -17,21 +26,27 @@ function dedupeOccurrences(context, needle) {
 
 function insertBeforeLast(pathname, marker, block) {
     let context = fs.readFileSync(pathname, 'utf-8');
+    const original = context;
     context = dedupeOccurrences(context, block);
     if (!context.includes(block)) {
         const pos = context.lastIndexOf(marker);
         context = context.slice(0, pos) + block + context.slice(pos);
     }
-    fs.writeFileSync(pathname, context);
+    if (context !== original) {
+        writeIfChanged(pathname, context);
+    }
 }
 
 function appendOnce(pathname, block) {
     let context = fs.readFileSync(pathname, 'utf-8');
+    const original = context;
     context = dedupeOccurrences(context, block);
     if (!context.includes(block)) {
         context += block;
     }
-    fs.writeFileSync(pathname, context);
+    if (context !== original) {
+        writeIfChanged(pathname, context);
+    }
 }
 
 let v8_h_path = process.argv[2] + '/include/v8.h';

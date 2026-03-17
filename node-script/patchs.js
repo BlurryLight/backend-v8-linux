@@ -5,10 +5,35 @@ const v8_path = path.resolve(process.argv[2]);
 const v8_version = process.argv[3];
 const wrap_new = process.argv[4] === "with_new_wrap";
 
-function justReplace(path, from, to) {
-    console.log(`patch ${path} ...`);
-    const context = fs.readFileSync(path, 'utf-8').replace(from, to);
-    fs.writeFileSync(path, context);
+function writeIfChanged(filepath, content) {
+    const existing = fs.readFileSync(filepath, 'utf-8');
+    if (existing === content) {
+        return false;
+    }
+    fs.writeFileSync(filepath, content);
+    return true;
+}
+
+function copyIfDifferent(from, to) {
+    const source = fs.readFileSync(from, 'utf-8');
+    if (fs.existsSync(to)) {
+        const existing = fs.readFileSync(to, 'utf-8');
+        if (existing === source) {
+            return false;
+        }
+    }
+    fs.writeFileSync(to, source);
+    return true;
+}
+
+function justReplace(filepath, from, to) {
+    console.log(`patch ${filepath} ...`);
+    const context = fs.readFileSync(filepath, 'utf-8');
+    const replaced = context.replace(from, to);
+    if (replaced === context) {
+        return false;
+    }
+    return writeIfChanged(filepath, replaced);
 }
 
 function dedupeOccurrences(context, needle) {
@@ -80,9 +105,12 @@ function addV8CC() {
         context = context.slice(0, ref_pos) + v8cc_dep + context.slice(ref_pos);
     }
 
-    fs.writeFileSync(filepath, context);
-    
-    fs.copyFileSync(path.join(__dirname, 'v8cc.cc'), path.join(v8_path, 'src/snapshot/v8cc.cc'));
+    writeIfChanged(filepath, context);
+
+    copyIfDifferent(
+        path.join(__dirname, 'v8cc.cc'),
+        path.join(v8_path, 'src/snapshot/v8cc.cc')
+    );
 }
 
 (function() {
@@ -94,13 +122,13 @@ function addV8CC() {
         const replacePath = path.join(v8_path, 'buildtools/third_party/libc++/BUILD.gn');
         if (v8_version == "9.4.146.24") {
             justReplace(replacePath, '\"trunk/src/vector.cpp\",', '\"trunk/src/vector.cpp\",\n    \"trunk/src/wrap_symbols.cc\",');
-            fs.copyFileSync(path.join(__dirname, 'wrap_symbols.cc'), path.join(v8_path, 'buildtools/third_party/libc++/trunk/src/wrap_symbols.cc'));
+            copyIfDifferent(path.join(__dirname, 'wrap_symbols.cc'), path.join(v8_path, 'buildtools/third_party/libc++/trunk/src/wrap_symbols.cc'));
         } else if (v8_version == "10.6.194") {
             justReplace(replacePath, '\"trunk/src/verbose_abort.cpp\",', '\"trunk/src/verbose_abort.cpp\",\n    \"trunk/src/wrap_symbols.cc\",');
-            fs.copyFileSync(path.join(__dirname, 'wrap_symbols.cc'), path.join(v8_path, 'buildtools/third_party/libc++/trunk/src/wrap_symbols.cc'));
+            copyIfDifferent(path.join(__dirname, 'wrap_symbols.cc'), path.join(v8_path, 'buildtools/third_party/libc++/trunk/src/wrap_symbols.cc'));
         } else if (v8_version == "11.8.172") {
             justReplace(replacePath, '\"//third_party/libc++/src/src/verbose_abort.cpp\",', '\"//third_party/libc++/src/src/verbose_abort.cpp\",\n    \"//third_party/libc++/src/src/wrap_symbols.cc\",');
-            fs.copyFileSync(path.join(__dirname, 'wrap_symbols.cc'), path.join(v8_path, 'third_party/libc++/src/src/wrap_symbols.cc'));
+            copyIfDifferent(path.join(__dirname, 'wrap_symbols.cc'), path.join(v8_path, 'third_party/libc++/src/src/wrap_symbols.cc'));
         } else {
             throw new Error(`not support version:${v8_version}`);
         }
