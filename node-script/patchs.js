@@ -11,6 +11,20 @@ function justReplace(path, from, to) {
     fs.writeFileSync(path, context);
 }
 
+function dedupeOccurrences(context, needle) {
+    const first = context.indexOf(needle);
+    if (first === -1) {
+        return context;
+    }
+
+    let next = context.indexOf(needle, first + needle.length);
+    while (next !== -1) {
+        context = context.slice(0, next) + context.slice(next + needle.length);
+        next = context.indexOf(needle, first + needle.length);
+    }
+    return context;
+}
+
 function addV8CC() {
     const filepath = path.join(v8_path, 'BUILD.gn')
     console.log(`add v8cc to ${filepath} ...`);
@@ -49,12 +63,24 @@ function addV8CC() {
         v8cc_target = v8cc_target.replace('":v8_turboshaft",', '');
     }
     console.log(v8cc_target);
-    //context = context.replace('deps = [ ":mksnapshot($v8_snapshot_toolchain)" ]', 'deps = [ ":mksnapshot($v8_snapshot_toolchain)", ":v8cc($v8_snapshot_toolchain)" ]');
-    const v8cc_target_insert_pos = context.indexOf('v8_executable("mksnapshot") {');
-    context = context.slice(0, v8cc_target_insert_pos) + v8cc_target + context.slice(v8cc_target_insert_pos);
+
+    context = dedupeOccurrences(context, v8cc_target);
+
+    if (!context.includes(v8cc_target)) {
+        const v8cc_target_insert_pos = context.indexOf('v8_executable("mksnapshot") {');
+        context = context.slice(0, v8cc_target_insert_pos) + v8cc_target + context.slice(v8cc_target_insert_pos);
+    }
+
     const wee8_pos = context.indexOf('v8_static_library("wee8")');
-    const ref_pos = context.indexOf('":v8_snapshot",', wee8_pos) + '":v8_snapshot"'.length + 1;
-    fs.writeFileSync(filepath, context.slice(0, ref_pos) + '\n      ":v8cc($v8_snapshot_toolchain)",' + context.slice(ref_pos));
+    const v8cc_dep = '\n      ":v8cc($v8_snapshot_toolchain)",';
+    context = dedupeOccurrences(context, v8cc_dep);
+
+    if (!context.includes(v8cc_dep)) {
+        const ref_pos = context.indexOf('":v8_snapshot",', wee8_pos) + '":v8_snapshot"'.length + 1;
+        context = context.slice(0, ref_pos) + v8cc_dep + context.slice(ref_pos);
+    }
+
+    fs.writeFileSync(filepath, context);
     
     fs.copyFileSync(path.join(__dirname, 'v8cc.cc'), path.join(v8_path, 'src/snapshot/v8cc.cc'));
 }

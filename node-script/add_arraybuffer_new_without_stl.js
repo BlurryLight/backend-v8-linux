@@ -1,10 +1,40 @@
 const fs = require('fs');
 const path = require('path');
 
-let v8_h_path = process.argv[2] + '/include/v8.h';
-let v8_h_context = fs.readFileSync(v8_h_path, 'utf-8');
+function dedupeOccurrences(context, needle) {
+    const first = context.indexOf(needle);
+    if (first === -1) {
+        return context;
+    }
 
-let v8_h_insert_pos = v8_h_context.lastIndexOf('#endif');
+    let next = context.indexOf(needle, first + needle.length);
+    while (next !== -1) {
+        context = context.slice(0, next) + context.slice(next + needle.length);
+        next = context.indexOf(needle, first + needle.length);
+    }
+    return context;
+}
+
+function insertBeforeLast(pathname, marker, block) {
+    let context = fs.readFileSync(pathname, 'utf-8');
+    context = dedupeOccurrences(context, block);
+    if (!context.includes(block)) {
+        const pos = context.lastIndexOf(marker);
+        context = context.slice(0, pos) + block + context.slice(pos);
+    }
+    fs.writeFileSync(pathname, context);
+}
+
+function appendOnce(pathname, block) {
+    let context = fs.readFileSync(pathname, 'utf-8');
+    context = dedupeOccurrences(context, block);
+    if (!context.includes(block)) {
+        context += block;
+    }
+    fs.writeFileSync(pathname, context);
+}
+
+let v8_h_path = process.argv[2] + '/include/v8.h';
 
 let v8_h_insert_code = `
 
@@ -30,7 +60,7 @@ V8_EXPORT Local<Module> Module_CreateSyntheticModule_Without_Stl(
 }
 `;
 
-fs.writeFileSync(v8_h_path, v8_h_context.slice(0, v8_h_insert_pos) + v8_h_insert_code + v8_h_context.slice(v8_h_insert_pos));
+insertBeforeLast(v8_h_path, '#endif', v8_h_insert_code);
 
 
 let api_cc_path = process.argv[2] + '/src/api/api.cc';
@@ -92,11 +122,7 @@ V8_EXPORT Local<Module> Module_CreateSyntheticModule_Without_Stl(
 
 `
 
-const api_cc_content = fs.readFileSync(api_cc_path, 'utf-8');
-
-const api_cc_insert_pos = api_cc_content.lastIndexOf('#include "src/api/api-macros-undef.h"');
-
-fs.writeFileSync(api_cc_path, api_cc_content.slice(0, api_cc_insert_pos) + api_cc_insert_code + api_cc_content.slice(api_cc_insert_pos));
+insertBeforeLast(api_cc_path, '#include "src/api/api-macros-undef.h"', api_cc_insert_code);
 
 const v8_inspector_h_path = path.join(process.argv[2], 'include/v8-inspector.h');
 
@@ -111,11 +137,7 @@ V8_EXPORT void V8Inspector_Destroy_Without_Stl(v8_inspector::V8Inspector*);
 
 `;
 
-const v8_inspector_h_content = fs.readFileSync(v8_inspector_h_path, 'utf-8');
-
-const v8_inspector_h_insert_pos = v8_inspector_h_content.lastIndexOf('#endif');
-
-fs.writeFileSync(v8_inspector_h_path, v8_inspector_h_content.slice(0, v8_inspector_h_insert_pos) + v8_inspector_h_insert_code + v8_inspector_h_content.slice(v8_inspector_h_insert_pos));
+insertBeforeLast(v8_inspector_h_path, '#endif', v8_inspector_h_insert_code);
 
 const v8_inspector_impl_cc_path = path.join(process.argv[2], 'src/inspector/v8-inspector-impl.cc');
 
@@ -134,7 +156,7 @@ V8_EXPORT void V8Inspector_Destroy_Without_Stl(V8Inspector* inspector) {
 
 `;
 
-fs.writeFileSync(v8_inspector_impl_cc_path, fs.readFileSync(v8_inspector_impl_cc_path, 'utf-8') + v8_inspector_impl_cc_insert_code);
+appendOnce(v8_inspector_impl_cc_path, v8_inspector_impl_cc_insert_code);
 
 
 const default_platform_cc_path = path.join(process.argv[2], 'src/libplatform/default-platform.cc');
@@ -175,15 +197,10 @@ void DeletePlatform_Without_Stl(v8::Platform* platform) {
 
 `;
 
-fs.writeFileSync(default_platform_cc_path, fs.readFileSync(default_platform_cc_path, 'utf-8') + default_platform_cc_insert_code);
+appendOnce(default_platform_cc_path, default_platform_cc_insert_code);
 
 
 const libplatform_h_path = path.join(process.argv[2], 'include/libplatform/libplatform.h');
-
-const libplatform_h_content = fs.readFileSync(libplatform_h_path, 'utf-8');
-
-let libplatform_h_insert_pos = libplatform_h_content.lastIndexOf('#endif');
-
 
 let v8_version = process.argv[3];
 
@@ -270,5 +287,5 @@ if (major_versoin > 10) {
 
 console.log(libplatform_h_insert_code);
 
-fs.writeFileSync(libplatform_h_path, libplatform_h_content.slice(0, libplatform_h_insert_pos) + libplatform_h_insert_code + libplatform_h_content.slice(libplatform_h_insert_pos));
+insertBeforeLast(libplatform_h_path, '#endif', libplatform_h_insert_code);
 
