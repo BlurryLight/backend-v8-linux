@@ -91,7 +91,7 @@ function addV8CC() {
 
     context = dedupeOccurrences(context, v8cc_target);
 
-    if (!context.includes(v8cc_target)) {
+    if (!context.includes('v8_executable("v8cc") {')) {
         const v8cc_target_insert_pos = context.indexOf('v8_executable("mksnapshot") {');
         context = context.slice(0, v8cc_target_insert_pos) + v8cc_target + context.slice(v8cc_target_insert_pos);
     }
@@ -100,7 +100,7 @@ function addV8CC() {
     const v8cc_dep = '\n      ":v8cc($v8_snapshot_toolchain)",';
     context = dedupeOccurrences(context, v8cc_dep);
 
-    if (!context.includes(v8cc_dep)) {
+    if (!context.includes('":v8cc($v8_snapshot_toolchain)",')) {
         const ref_pos = context.indexOf('":v8_snapshot",', wee8_pos) + '":v8_snapshot"'.length + 1;
         context = context.slice(0, ref_pos) + v8cc_dep + context.slice(ref_pos);
     }

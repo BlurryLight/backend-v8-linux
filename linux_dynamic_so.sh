@@ -7,12 +7,15 @@ NEW_WRAP=""
 ENABLE_MAGLEV=false
 DO_CLEAN=true
 BUILD_TYPE=Release
+USE_EXISTING_V8=false
+V8_SOURCE_DIR=""
 # GITHUB_WORKSPACE=/home/panda/code/backend-v8-linux
 GITHUB_WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ORIGINAL_PWD="$(pwd)"
 
 usage() {
     cat <<EOF
-Usage: $0 [--maglev] [--no-maglev] [--clean] [--no-clean] [--build-type Debug|Release]
+Usage: $0 [--maglev] [--no-maglev] [--clean] [--no-clean] [--build-type Debug|Release] [--use-existing-v8] [--v8-source-dir PATH]
 
 Options:
   --maglev            Enable Maglev compilation.
@@ -20,12 +23,25 @@ Options:
   --clean             Clean ninja outputs before build.
   --no-clean          Keep ninja outputs for incremental build.
   --build-type TYPE   Build type: Debug or Release. Default: Release.
+  --use-existing-v8   Build from an existing V8 checkout and skip git checkout/gclient sync.
+                      If --v8-source-dir is omitted, the script uses the directory where it was launched.
+  --v8-source-dir     Path to an existing V8 checkout. Implies --use-existing-v8.
   -h, --help          Show this help message.
 EOF
 }
 
 have_cmd() {
     command -v "$1" >/dev/null 2>&1
+}
+
+ensure_v8_checkout() {
+    local dir="$1"
+
+    if [ ! -d "$dir/.git" ] || [ ! -f "$dir/BUILD.gn" ]; then
+        echo "Invalid V8 checkout: $dir"
+        echo "Expected a git checkout containing BUILD.gn."
+        exit 1
+    fi
 }
 
 ensure_apt_packages() {
@@ -113,6 +129,23 @@ while [ $# -gt 0 ]; do
         --build-type=*)
             BUILD_TYPE="${1#*=}"
             ;;
+        --use-existing-v8)
+            USE_EXISTING_V8=true
+            ;;
+        --v8-source-dir)
+            shift
+            if [ -z "$1" ]; then
+                echo "Missing value for --v8-source-dir"
+                usage
+                exit 1
+            fi
+            V8_SOURCE_DIR="$1"
+            USE_EXISTING_V8=true
+            ;;
+        --v8-source-dir=*)
+            V8_SOURCE_DIR="${1#*=}"
+            USE_EXISTING_V8=true
+            ;;
         -h|--help)
             usage
             exit 0
@@ -194,20 +227,34 @@ export PATH=$(pwd)/depot_tools:$PATH
 mkdir -p v8
 cd v8
 
-echo "=====[ Fetching V8 ]====="
-if [ ! -d "$HOME/v8/v8/.git" ]; then
-    fetch v8
+if [ "$USE_EXISTING_V8" = true ]; then
+    if [ -z "$V8_SOURCE_DIR" ]; then
+        V8_SOURCE_DIR="$ORIGINAL_PWD"
+    fi
+
+    V8_SOURCE_DIR="$(cd "$V8_SOURCE_DIR" && pwd)"
+    ensure_v8_checkout "$V8_SOURCE_DIR"
+    echo "Using existing V8 checkout at $V8_SOURCE_DIR"
 else
-    echo "Reusing existing V8 checkout at $HOME/v8/v8"
+    V8_SOURCE_DIR="$HOME/v8/v8"
+    echo "=====[ Fetching V8 ]====="
+    if [ ! -d "$V8_SOURCE_DIR/.git" ]; then
+        fetch v8
+    else
+        echo "Reusing existing V8 checkout at $V8_SOURCE_DIR"
+    fi
+
+    if ! grep -q "target_os = \\['linux'\\]" .gclient 2>/dev/null; then
+        echo "target_os = ['linux']" >> .gclient
+    fi
 fi
 
-if ! grep -q "target_os = \\['linux'\\]" .gclient 2>/dev/null; then
-    echo "target_os = ['linux']" >> .gclient
-fi
+cd "$V8_SOURCE_DIR"
 
-cd ~/v8/v8
-git checkout refs/tags/$VERSION
-gclient sync
+if [ "$USE_EXISTING_V8" = false ]; then
+    git checkout "refs/tags/$VERSION"
+    gclient sync
+fi
 
 if grep -q "#include <uchar.h>" src/inspector/string-16.h src/inspector/v8-string-conversions.h; then
     node $GITHUB_WORKSPACE/node-script/do-gitpatch.js -p $GITHUB_WORKSPACE/patches/remove_uchar_include_v11.8.172.patch

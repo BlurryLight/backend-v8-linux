@@ -24,11 +24,15 @@ function dedupeOccurrences(context, needle) {
     return context;
 }
 
-function insertBeforeLast(pathname, marker, block) {
+function hasAnyNeedle(context, needles) {
+    return needles.some((needle) => context.includes(needle));
+}
+
+function insertBeforeLast(pathname, marker, block, existingNeedles = []) {
     let context = fs.readFileSync(pathname, 'utf-8');
     const original = context;
     context = dedupeOccurrences(context, block);
-    if (!context.includes(block)) {
+    if (!context.includes(block) && !hasAnyNeedle(context, existingNeedles)) {
         const pos = context.lastIndexOf(marker);
         context = context.slice(0, pos) + block + context.slice(pos);
     }
@@ -37,11 +41,11 @@ function insertBeforeLast(pathname, marker, block) {
     }
 }
 
-function appendOnce(pathname, block) {
+function appendOnce(pathname, block, existingNeedles = []) {
     let context = fs.readFileSync(pathname, 'utf-8');
     const original = context;
     context = dedupeOccurrences(context, block);
-    if (!context.includes(block)) {
+    if (!context.includes(block) && !hasAnyNeedle(context, existingNeedles)) {
         context += block;
     }
     if (context !== original) {
@@ -75,7 +79,11 @@ V8_EXPORT Local<Module> Module_CreateSyntheticModule_Without_Stl(
 }
 `;
 
-insertBeforeLast(v8_h_path, '#endif', v8_h_insert_code);
+insertBeforeLast(v8_h_path, '#endif', v8_h_insert_code, [
+    '#define HAS_ARRAYBUFFER_NEW_WITHOUT_STL 1',
+    'ArrayBuffer_New_Without_Stl(Isolate* isolate,',
+    'Module_CreateSyntheticModule_Without_Stl('
+]);
 
 
 let api_cc_path = process.argv[2] + '/src/api/api.cc';
@@ -137,7 +145,10 @@ V8_EXPORT Local<Module> Module_CreateSyntheticModule_Without_Stl(
 
 `
 
-insertBeforeLast(api_cc_path, '#include "src/api/api-macros-undef.h"', api_cc_insert_code);
+insertBeforeLast(api_cc_path, '#include "src/api/api-macros-undef.h"', api_cc_insert_code, [
+    'ArrayBuffer_New_Without_Stl(Isolate* isolate,',
+    'Module_CreateSyntheticModule_Without_Stl('
+]);
 
 const v8_inspector_h_path = path.join(process.argv[2], 'include/v8-inspector.h');
 
@@ -152,7 +163,10 @@ V8_EXPORT void V8Inspector_Destroy_Without_Stl(v8_inspector::V8Inspector*);
 
 `;
 
-insertBeforeLast(v8_inspector_h_path, '#endif', v8_inspector_h_insert_code);
+insertBeforeLast(v8_inspector_h_path, '#endif', v8_inspector_h_insert_code, [
+    'V8Inspector_Create_Without_Stl(',
+    'V8Inspector_Destroy_Without_Stl('
+]);
 
 const v8_inspector_impl_cc_path = path.join(process.argv[2], 'src/inspector/v8-inspector-impl.cc');
 
@@ -171,7 +185,10 @@ V8_EXPORT void V8Inspector_Destroy_Without_Stl(V8Inspector* inspector) {
 
 `;
 
-appendOnce(v8_inspector_impl_cc_path, v8_inspector_impl_cc_insert_code);
+appendOnce(v8_inspector_impl_cc_path, v8_inspector_impl_cc_insert_code, [
+    'V8Inspector_Create_Without_Stl(v8::Isolate* isolate, V8InspectorClient* client)',
+    'V8Inspector_Destroy_Without_Stl(V8Inspector* inspector)'
+]);
 
 
 const default_platform_cc_path = path.join(process.argv[2], 'src/libplatform/default-platform.cc');
@@ -212,7 +229,10 @@ void DeletePlatform_Without_Stl(v8::Platform* platform) {
 
 `;
 
-appendOnce(default_platform_cc_path, default_platform_cc_insert_code);
+appendOnce(default_platform_cc_path, default_platform_cc_insert_code, [
+    'NewDefaultPlatform_Without_Stl(',
+    'DeletePlatform_Without_Stl(v8::Platform* platform)'
+]);
 
 
 const libplatform_h_path = path.join(process.argv[2], 'include/libplatform/libplatform.h');
@@ -302,5 +322,8 @@ if (major_versoin > 10) {
 
 console.log(libplatform_h_insert_code);
 
-insertBeforeLast(libplatform_h_path, '#endif', libplatform_h_insert_code);
+insertBeforeLast(libplatform_h_path, '#endif', libplatform_h_insert_code, [
+    'NewDefaultPlatform_Without_Stl(',
+    'DeletePlatform_Without_Stl(v8::Platform*)'
+]);
 
