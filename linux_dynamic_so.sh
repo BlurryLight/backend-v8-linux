@@ -134,6 +134,8 @@ case "$BUILD_TYPE" in
         BUILD_TYPE_LOWER="debug"
         STRIP_DEBUG_INFO=false
         SYMBOL_LEVEL=2
+        V8_OPTIMIZED_DEBUG=false
+        USE_DEBUG_FISSION=false
         ;;
     Release|release)
         BUILD_TYPE=Release
@@ -142,6 +144,8 @@ case "$BUILD_TYPE" in
         BUILD_TYPE_LOWER="release"
         STRIP_DEBUG_INFO=true
         SYMBOL_LEVEL=0
+        V8_OPTIMIZED_DEBUG=true
+        USE_DEBUG_FISSION=true
         ;;
     *)
         echo "Invalid build type: $BUILD_TYPE"
@@ -227,7 +231,7 @@ node $GITHUB_WORKSPACE/node-script/patchs.js . $VERSION $NEW_WRAP
 
 echo "=====[ Building V8 ]====="
 
-gn gen "$BUILD_DIR" --args="is_debug=$IS_DEBUG v8_enable_i18n_support=false v8_use_snapshot=true v8_use_external_startup_data=false is_component_build=true strip_debug_info=$STRIP_DEBUG_INFO symbol_level=$SYMBOL_LEVEL v8_enable_pointer_compression=false v8_enable_sandbox=false $CXX_SETTING is_clang=true v8_enable_maglev=$MAGLEV_ARG v8_enable_webassembly=false"
+gn gen "$BUILD_DIR" --args="is_debug=$IS_DEBUG v8_optimized_debug=$V8_OPTIMIZED_DEBUG use_debug_fission=$USE_DEBUG_FISSION v8_enable_i18n_support=false v8_use_snapshot=true v8_use_external_startup_data=false is_component_build=true strip_debug_info=$STRIP_DEBUG_INFO symbol_level=$SYMBOL_LEVEL v8_enable_pointer_compression=false v8_enable_sandbox=false $CXX_SETTING is_clang=true v8_enable_maglev=$MAGLEV_ARG v8_enable_webassembly=false"
 
 if [ "$DO_CLEAN" = true ]; then
     ninja -C "$BUILD_DIR" -t clean
