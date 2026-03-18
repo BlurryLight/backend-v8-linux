@@ -288,7 +288,7 @@ if [ "$DO_CLEAN" = true ]; then
     ninja -C "$BUILD_DIR" -t clean
 fi
 
-ninja -v -C "$BUILD_DIR" v8
+ninja -v -C "$BUILD_DIR" v8 v8cc mksnapshot
 
 mkdir -p "$OUTPUT_BASE/Lib/Linux"
 if [ "$NEW_WRAP" == "with_new_wrap" ]; then 
