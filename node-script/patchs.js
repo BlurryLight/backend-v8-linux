@@ -60,6 +60,8 @@ function addV8CC() {
     visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
     sources = [
+      "src/snapshot/embedded/embedded-empty.cc",
+      "src/snapshot/snapshot-empty.cc",
       "src/snapshot/v8cc.cc",
     ]
 
@@ -80,7 +82,6 @@ function addV8CC() {
       ":v8_tracing",
       ":v8_turboshaft",
       "//build/win:default_exe_manifest",
-      ":v8_snapshot",
     ]
   }
     `;
