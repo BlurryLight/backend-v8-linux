@@ -1,0 +1,519 @@
+From 9d61fd0ac57b9137cca4b4bd5dd05a97beb8f77a Mon Sep 17 00:00:00 2001
+From: panda <zhonghaoyu555@gmail.com>
+Date: Wed, 25 Mar 2026 11:20:29 +0800
+Subject: [PATCH] Add JIT compile lifecycle callbacks
+
+---
+ include/v8-callbacks.h                        | 18 ++++
+ include/v8-isolate.h                          | 82 +++++++++++++++++
+ src/api/api.cc                                | 58 ++++++++++++
+ src/codegen/compiler.cc                       |  5 ++
+ .../optimizing-compile-dispatcher.cc          |  2 +
+ src/execution/isolate.cc                      | 89 +++++++++++++++++++
+ src/execution/isolate.h                       | 43 +++++++++
+ src/maglev/maglev-concurrent-dispatcher.cc    |  2 +
+ test/cctest/test-api.cc                       | 45 ++++++++++
+ 9 files changed, 344 insertions(+)
+
+diff --git a/include/v8-callbacks.h b/include/v8-callbacks.h
+index 2a25b9ee04e..aa469196401 100644
+--- a/include/v8-callbacks.h
++++ b/include/v8-callbacks.h
+@@ -139,6 +139,24 @@ enum JitCodeEventOptions {
+  */
+ using JitCodeEventHandler = void (*)(const JitCodeEvent* event);
+ 
++// --- JIT compilation callbacks ---
++
++enum JitCodeEventKind {
++  kJitCodeEventBaseline = 1 << 0,
++  kJitCodeEventMaglev = 1 << 1,
++  kJitCodeEventMaglevConcurrent = 1 << 2,
++  kJitCodeEventTurbofan = 1 << 3,
++  kJitCodeEventTurbofanConcurrent = 1 << 4,
++  kJitCodeEventAll = kJitCodeEventBaseline | kJitCodeEventMaglev |
++                     kJitCodeEventMaglevConcurrent | kJitCodeEventTurbofan |
++                     kJitCodeEventTurbofanConcurrent
++};
++
++using JitCodeEventCallback = void (*)(Isolate* isolate, JitCodeEventKind kind);
++using JitCodeEventCallbackWithData = void (*)(Isolate* isolate,
++                                              JitCodeEventKind kind,
++                                              void* data);
++
+ // --- Garbage Collection Callbacks ---
+ 
+ /**
+diff --git a/include/v8-isolate.h b/include/v8-isolate.h
+index f6b64db360b..66110fadf77 100644
+--- a/include/v8-isolate.h
++++ b/include/v8-isolate.h
+@@ -923,6 +923,11 @@ class V8_EXPORT Isolate {
+                               GCCallbackFlags flags);
+   using GCCallbackWithData = void (*)(Isolate* isolate, GCType type,
+                                       GCCallbackFlags flags, void* data);
++  using JitCodeEventCallback = void (*)(Isolate* isolate,
++                                        JitCodeEventKind kind);
++  using JitCodeEventCallbackWithData = void (*)(Isolate* isolate,
++                                                JitCodeEventKind kind,
++                                                void* data);
+ 
+   /**
+    * Enables the host application to receive a notification before a
+@@ -993,6 +998,83 @@ class V8_EXPORT Isolate {
+   void RemoveGCEpilogueCallback(GCCallbackWithData callback,
+                                 void* data = nullptr);
+ 
++  /**
++   * Enables the host application to receive a notification before JIT
++   * compilation work starts.
++   *
++   * These callbacks may run on background compiler threads for concurrent
++   * Maglev and TurboFan compilation.
++   *
++   * \param callback The callback to be invoked.
++   * \param kind_filter A filter in case it should be applied.
++   */
++  void AddJitCodeEventPrologueCallback(
++      JitCodeEventCallback callback,
++      JitCodeEventKind kind_filter = kJitCodeEventAll);
++
++  /**
++   * \copydoc AddJitCodeEventPrologueCallback(JitCodeEventCallback,
++   *                                          JitCodeEventKind)
++   *
++   * \param data Additional data that should be passed to the callback.
++   */
++  void AddJitCodeEventPrologueCallback(
++      JitCodeEventCallbackWithData callback, void* data = nullptr,
++      JitCodeEventKind kind_filter = kJitCodeEventAll);
++
++  /**
++   * This function removes a callback which was added by
++   * `AddJitCodeEventPrologueCallback`.
++   *
++   * \param callback the callback to remove.
++   */
++  void RemoveJitCodeEventPrologueCallback(JitCodeEventCallback callback);
++
++  /**
++   * \copydoc RemoveJitCodeEventPrologueCallback(JitCodeEventCallback)
++   *
++   * \param data Additional data that was used to install the callback.
++   */
++  void RemoveJitCodeEventPrologueCallback(JitCodeEventCallbackWithData callback,
++                                          void* data = nullptr);
++
++  /**
++   * Enables the host application to receive a notification after JIT
++   * compilation work ends.
++   *
++   * \copydetails AddJitCodeEventPrologueCallback(JitCodeEventCallback,
++   *                                              JitCodeEventKind)
++   */
++  void AddJitCodeEventEpilogueCallback(
++      JitCodeEventCallback callback,
++      JitCodeEventKind kind_filter = kJitCodeEventAll);
++
++  /**
++   * \copydoc AddJitCodeEventEpilogueCallback(JitCodeEventCallback,
++   *                                          JitCodeEventKind)
++   *
++   * \param data Additional data that should be passed to the callback.
++   */
++  void AddJitCodeEventEpilogueCallback(
++      JitCodeEventCallbackWithData callback, void* data = nullptr,
++      JitCodeEventKind kind_filter = kJitCodeEventAll);
++
++  /**
++   * This function removes a callback which was added by
++   * `AddJitCodeEventEpilogueCallback`.
++   *
++   * \param callback the callback to remove.
++   */
++  void RemoveJitCodeEventEpilogueCallback(JitCodeEventCallback callback);
++
++  /**
++   * \copydoc RemoveJitCodeEventEpilogueCallback(JitCodeEventCallback)
++   *
++   * \param data Additional data that was used to install the callback.
++   */
++  void RemoveJitCodeEventEpilogueCallback(JitCodeEventCallbackWithData callback,
++                                          void* data = nullptr);
++
+   /**
+    * Sets an embedder roots handle that V8 should consider when performing
+    * non-unified heap garbage collections. The intended use case is for setting
+diff --git a/src/api/api.cc b/src/api/api.cc
+index 2f31e6fc51a..0cca8f641d3 100644
+--- a/src/api/api.cc
++++ b/src/api/api.cc
+@@ -9201,6 +9201,64 @@ void Isolate::RemoveGCEpilogueCallback(GCCallback callback) {
+   RemoveGCEpilogueCallback(CallGCCallbackWithoutData, data);
+ }
+ 
++void Isolate::AddJitCodeEventPrologueCallback(
++    JitCodeEventCallbackWithData callback, void* data,
++    JitCodeEventKind kind_filter) {
++  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(this);
++  i_isolate->AddJitCodeEventPrologueCallback(callback, data, kind_filter);
++}
++
++void Isolate::RemoveJitCodeEventPrologueCallback(
++    JitCodeEventCallbackWithData callback, void* data) {
++  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(this);
++  i_isolate->RemoveJitCodeEventPrologueCallback(callback, data);
++}
++
++void Isolate::AddJitCodeEventEpilogueCallback(
++    JitCodeEventCallbackWithData callback, void* data,
++    JitCodeEventKind kind_filter) {
++  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(this);
++  i_isolate->AddJitCodeEventEpilogueCallback(callback, data, kind_filter);
++}
++
++void Isolate::RemoveJitCodeEventEpilogueCallback(
++    JitCodeEventCallbackWithData callback, void* data) {
++  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(this);
++  i_isolate->RemoveJitCodeEventEpilogueCallback(callback, data);
++}
++
++static void CallJitCodeEventCallbackWithoutData(Isolate* v8_isolate,
++                                                JitCodeEventKind kind,
++                                                void* data) {
++  reinterpret_cast<Isolate::JitCodeEventCallback>(data)(v8_isolate, kind);
++}
++
++void Isolate::AddJitCodeEventPrologueCallback(JitCodeEventCallback callback,
++                                              JitCodeEventKind kind_filter) {
++  void* data = reinterpret_cast<void*>(callback);
++  AddJitCodeEventPrologueCallback(CallJitCodeEventCallbackWithoutData, data,
++                                  kind_filter);
++}
++
++void Isolate::RemoveJitCodeEventPrologueCallback(
++    JitCodeEventCallback callback) {
++  void* data = reinterpret_cast<void*>(callback);
++  RemoveJitCodeEventPrologueCallback(CallJitCodeEventCallbackWithoutData, data);
++}
++
++void Isolate::AddJitCodeEventEpilogueCallback(JitCodeEventCallback callback,
++                                              JitCodeEventKind kind_filter) {
++  void* data = reinterpret_cast<void*>(callback);
++  AddJitCodeEventEpilogueCallback(CallJitCodeEventCallbackWithoutData, data,
++                                  kind_filter);
++}
++
++void Isolate::RemoveJitCodeEventEpilogueCallback(
++    JitCodeEventCallback callback) {
++  void* data = reinterpret_cast<void*>(callback);
++  RemoveJitCodeEventEpilogueCallback(CallJitCodeEventCallbackWithoutData, data);
++}
++
+ void Isolate::SetEmbedderRootsHandler(EmbedderRootsHandler* handler) {
+   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(this);
+   i_isolate->heap()->SetEmbedderRootsHandler(handler);
+diff --git a/src/codegen/compiler.cc b/src/codegen/compiler.cc
+index 972898e2a95..6dfc3fe3fc0 100644
+--- a/src/codegen/compiler.cc
++++ b/src/codegen/compiler.cc
+@@ -1042,6 +1042,7 @@ bool PrepareJobWithHandleScope(OptimizedCompilationJob* job, Isolate* isolate,
+ 
+ bool CompileTurbofan_NotConcurrent(Isolate* isolate,
+                                    TurbofanCompilationJob* job) {
++  JitCodeEventScope jit_code_event_scope(isolate, v8::kJitCodeEventTurbofan);
+   OptimizedCompilationInfo* const compilation_info = job->compilation_info();
+   DCHECK_EQ(compilation_info->code_kind(), CodeKind::TURBOFAN);
+ 
+@@ -1223,6 +1224,7 @@ MaybeHandle<Code> CompileMaglev(Isolate* isolate, Handle<JSFunction> function,
+                                 ConcurrencyMode mode, BytecodeOffset osr_offset,
+                                 CompileResultBehavior result_behavior) {
+ #ifdef V8_ENABLE_MAGLEV
++  std::unique_ptr<JitCodeEventScope> jit_code_event_scope;
+   DCHECK(maglev::IsMaglevEnabled());
+   CHECK(result_behavior == CompileResultBehavior::kDefault);
+ 
+@@ -1257,6 +1259,8 @@ MaybeHandle<Code> CompileMaglev(Isolate* isolate, Handle<JSFunction> function,
+   }
+ 
+   if (IsSynchronous(mode)) {
++    jit_code_event_scope =
++        std::make_unique<JitCodeEventScope>(isolate, v8::kJitCodeEventMaglev);
+     CompilationJob::Status status =
+         job->ExecuteJob(isolate->counters()->runtime_call_stats(),
+                         isolate->main_thread_local_isolate());
+@@ -2722,6 +2726,7 @@ bool Compiler::CompileSharedWithBaseline(Isolate* isolate,
+   Handle<Code> code;
+   base::TimeDelta time_taken;
+   {
++    JitCodeEventScope jit_code_event_scope(isolate, v8::kJitCodeEventBaseline);
+     base::ScopedTimer timer(
+         v8_flags.trace_baseline || v8_flags.log_function_events ? &time_taken
+                                                                 : nullptr);
+diff --git a/src/compiler-dispatcher/optimizing-compile-dispatcher.cc b/src/compiler-dispatcher/optimizing-compile-dispatcher.cc
+index 9a71d563c19..d4de7ccc321 100644
+--- a/src/compiler-dispatcher/optimizing-compile-dispatcher.cc
++++ b/src/compiler-dispatcher/optimizing-compile-dispatcher.cc
+@@ -97,6 +97,8 @@ TurbofanCompilationJob* OptimizingCompileDispatcher::NextInput(
+ void OptimizingCompileDispatcher::CompileNext(TurbofanCompilationJob* job,
+                                               LocalIsolate* local_isolate) {
+   if (!job) return;
++  JitCodeEventScope jit_code_event_scope(isolate_,
++                                         v8::kJitCodeEventTurbofanConcurrent);
+ 
+   // The function may have already been optimized by OSR.  Simply continue.
+   CompilationJob::Status status =
+diff --git a/src/execution/isolate.cc b/src/execution/isolate.cc
+index e7232e5c1fd..f854ba77e78 100644
+--- a/src/execution/isolate.cc
++++ b/src/execution/isolate.cc
+@@ -5232,6 +5232,95 @@ void Isolate::RemoveCallCompletedCallback(CallCompletedCallback callback) {
+   call_completed_callbacks_.erase(pos);
+ }
+ 
++namespace {
++
++std::vector<Isolate::JitCodeEventCallbackData>::iterator
++FindJitCodeEventCallback(
++    std::vector<Isolate::JitCodeEventCallbackData>& callbacks,
++    v8::JitCodeEventCallbackWithData callback, void* data) {
++  return std::find_if(
++      callbacks.begin(), callbacks.end(),
++      [callback, data](const Isolate::JitCodeEventCallbackData& entry) {
++        return entry.callback == callback && entry.data == data;
++      });
++}
++
++void AddJitCodeEventCallback(
++    std::vector<Isolate::JitCodeEventCallbackData>* callbacks,
++    v8::JitCodeEventCallbackWithData callback, v8::Isolate* isolate,
++    v8::JitCodeEventKind kind, void* data) {
++  DCHECK_NOT_NULL(callback);
++  DCHECK_EQ(callbacks->end(),
++            FindJitCodeEventCallback(*callbacks, callback, data));
++  callbacks->emplace_back(callback, isolate, kind, data);
++}
++
++void RemoveJitCodeEventCallback(
++    std::vector<Isolate::JitCodeEventCallbackData>* callbacks,
++    v8::JitCodeEventCallbackWithData callback, void* data) {
++  auto pos = FindJitCodeEventCallback(*callbacks, callback, data);
++  DCHECK_NE(callbacks->end(), pos);
++  callbacks->erase(pos);
++}
++
++void InvokeJitCodeEventCallbacks(
++    base::Mutex* mutex,
++    std::vector<Isolate::JitCodeEventCallbackData>* callbacks,
++    v8::JitCodeEventKind kind) {
++  std::vector<Isolate::JitCodeEventCallbackData> callbacks_to_invoke;
++  {
++    base::MutexGuard guard(mutex);
++    callbacks_to_invoke = *callbacks;
++  }
++  for (const auto& callback_data : callbacks_to_invoke) {
++    if (kind & callback_data.kind) {
++      callback_data.callback(callback_data.isolate, kind, callback_data.data);
++    }
++  }
++}
++
++}  // namespace
++
++void Isolate::AddJitCodeEventPrologueCallback(
++    v8::JitCodeEventCallbackWithData callback, void* data,
++    v8::JitCodeEventKind kind) {
++  base::MutexGuard guard(&jit_code_event_callbacks_mutex_);
++  AddJitCodeEventCallback(&jit_code_event_prologue_callbacks_, callback,
++                          reinterpret_cast<v8::Isolate*>(this), kind, data);
++}
++
++void Isolate::RemoveJitCodeEventPrologueCallback(
++    v8::JitCodeEventCallbackWithData callback, void* data) {
++  base::MutexGuard guard(&jit_code_event_callbacks_mutex_);
++  RemoveJitCodeEventCallback(&jit_code_event_prologue_callbacks_, callback,
++                             data);
++}
++
++void Isolate::AddJitCodeEventEpilogueCallback(
++    v8::JitCodeEventCallbackWithData callback, void* data,
++    v8::JitCodeEventKind kind) {
++  base::MutexGuard guard(&jit_code_event_callbacks_mutex_);
++  AddJitCodeEventCallback(&jit_code_event_epilogue_callbacks_, callback,
++                          reinterpret_cast<v8::Isolate*>(this), kind, data);
++}
++
++void Isolate::RemoveJitCodeEventEpilogueCallback(
++    v8::JitCodeEventCallbackWithData callback, void* data) {
++  base::MutexGuard guard(&jit_code_event_callbacks_mutex_);
++  RemoveJitCodeEventCallback(&jit_code_event_epilogue_callbacks_, callback,
++                             data);
++}
++
++void Isolate::CallJitCodeEventPrologueCallbacks(v8::JitCodeEventKind kind) {
++  InvokeJitCodeEventCallbacks(&jit_code_event_callbacks_mutex_,
++                              &jit_code_event_prologue_callbacks_, kind);
++}
++
++void Isolate::CallJitCodeEventEpilogueCallbacks(v8::JitCodeEventKind kind) {
++  InvokeJitCodeEventCallbacks(&jit_code_event_callbacks_mutex_,
++                              &jit_code_event_epilogue_callbacks_, kind);
++}
++
+ void Isolate::FireCallCompletedCallbackInternal(
+     MicrotaskQueue* microtask_queue) {
+   DCHECK(thread_local_top()->CallDepthIsZero());
+diff --git a/src/execution/isolate.h b/src/execution/isolate.h
+index cc472d79656..1e1dd4f0f2f 100644
+--- a/src/execution/isolate.h
++++ b/src/execution/isolate.h
+@@ -1664,6 +1664,31 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
+     FireCallCompletedCallbackInternal(microtask_queue);
+   }
+ 
++  void AddJitCodeEventPrologueCallback(
++      v8::JitCodeEventCallbackWithData callback, void* data,
++      v8::JitCodeEventKind kind);
++  void RemoveJitCodeEventPrologueCallback(
++      v8::JitCodeEventCallbackWithData callback, void* data);
++  void AddJitCodeEventEpilogueCallback(
++      v8::JitCodeEventCallbackWithData callback, void* data,
++      v8::JitCodeEventKind kind);
++  void RemoveJitCodeEventEpilogueCallback(
++      v8::JitCodeEventCallbackWithData callback, void* data);
++  void CallJitCodeEventPrologueCallbacks(v8::JitCodeEventKind kind);
++  void CallJitCodeEventEpilogueCallbacks(v8::JitCodeEventKind kind);
++
++  struct JitCodeEventCallbackData final {
++    JitCodeEventCallbackData(v8::JitCodeEventCallbackWithData callback,
++                             v8::Isolate* isolate, v8::JitCodeEventKind kind,
++                             void* data)
++        : callback(callback), isolate(isolate), kind(kind), data(data) {}
++
++    v8::JitCodeEventCallbackWithData callback;
++    v8::Isolate* isolate;
++    v8::JitCodeEventKind kind;
++    void* data;
++  };
++
+   void AddBeforeCallEnteredCallback(BeforeCallEnteredCallback callback);
+   void RemoveBeforeCallEnteredCallback(BeforeCallEnteredCallback callback);
+   inline void FireBeforeCallEnteredCallback();
+@@ -2447,6 +2472,10 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
+   // Vector of callbacks when a Call completes.
+   std::vector<CallCompletedCallback> call_completed_callbacks_;
+ 
++  mutable base::Mutex jit_code_event_callbacks_mutex_;
++  std::vector<JitCodeEventCallbackData> jit_code_event_prologue_callbacks_;
++  std::vector<JitCodeEventCallbackData> jit_code_event_epilogue_callbacks_;
++
+   v8::Isolate::UseCounterCallback use_counter_callback_ = nullptr;
+ 
+   std::shared_ptr<CompilationStatistics> turbo_statistics_;
+@@ -2757,6 +2786,20 @@ class V8_NODISCARD SharedMutexGuardIfOffThread<Isolate, kIsShared> final {
+       delete;
+ };
+ 
++class V8_NODISCARD JitCodeEventScope final {
++ public:
++  JitCodeEventScope(Isolate* isolate, v8::JitCodeEventKind kind)
++      : isolate_(isolate), kind_(kind) {
++    isolate_->CallJitCodeEventPrologueCallbacks(kind_);
++  }
++
++  ~JitCodeEventScope() { isolate_->CallJitCodeEventEpilogueCallbacks(kind_); }
++
++ private:
++  Isolate* isolate_;
++  v8::JitCodeEventKind kind_;
++};
++
+ }  // namespace internal
+ }  // namespace v8
+ 
+diff --git a/src/maglev/maglev-concurrent-dispatcher.cc b/src/maglev/maglev-concurrent-dispatcher.cc
+index 4009b11167c..32a19bb4f60 100644
+--- a/src/maglev/maglev-concurrent-dispatcher.cc
++++ b/src/maglev/maglev-concurrent-dispatcher.cc
+@@ -245,6 +245,8 @@ class MaglevConcurrentDispatcher::JobTask final : public v8::JobTask {
+       std::unique_ptr<MaglevCompilationJob> job;
+       if (incoming_queue()->Dequeue(&job)) {
+         DCHECK_NOT_NULL(job);
++        JitCodeEventScope jit_code_event_scope(
++            isolate(), v8::kJitCodeEventMaglevConcurrent);
+         TRACE_EVENT_WITH_FLOW0(
+             TRACE_DISABLED_BY_DEFAULT("v8.compile"), "V8.MaglevBackground",
+             job->trace_id(),
+diff --git a/test/cctest/test-api.cc b/test/cctest/test-api.cc
+index adb4b4277fb..275077a5927 100644
+--- a/test/cctest/test-api.cc
++++ b/test/cctest/test-api.cc
+@@ -17870,6 +17870,10 @@ int prologue_call_count_second = 0;
+ int epilogue_call_count_second = 0;
+ int prologue_call_count_alloc = 0;
+ int epilogue_call_count_alloc = 0;
++v8::Isolate* jit_code_event_callbacks_isolate = nullptr;
++int jit_code_event_prologue_count = 0;
++int jit_code_event_epilogue_count = 0;
++v8::JitCodeEventKind last_jit_code_event_kind = v8::kJitCodeEventAll;
+ 
+ void PrologueCallback(v8::Isolate* isolate,
+                       v8::GCType,
+@@ -17919,6 +17923,20 @@ void EpilogueCallbackNew(v8::Isolate* isolate, v8::GCType,
+   ++*static_cast<int*>(data);
+ }
+ 
++void JitCodeEventPrologueCallback(v8::Isolate* isolate,
++                                  v8::JitCodeEventKind kind) {
++  CHECK_EQ(jit_code_event_callbacks_isolate, isolate);
++  ++jit_code_event_prologue_count;
++  last_jit_code_event_kind = kind;
++}
++
++void JitCodeEventEpilogueCallback(v8::Isolate* isolate,
++                                  v8::JitCodeEventKind kind) {
++  CHECK_EQ(jit_code_event_callbacks_isolate, isolate);
++  CHECK_EQ(last_jit_code_event_kind, kind);
++  ++jit_code_event_epilogue_count;
++}
++
+ TEST(GCCallbacksOld) {
+   LocalContext context;
+ 
+@@ -18001,6 +18019,33 @@ TEST(GCCallbacksWithData) {
+   CHECK_EQ(2, epilogue2);
+ }
+ 
++TEST(JitCodeEventCallbacks) {
++  LocalContext context;
++  v8::Isolate* isolate = context->GetIsolate();
++  v8::HandleScope scope(isolate);
++
++  jit_code_event_callbacks_isolate = isolate;
++  jit_code_event_prologue_count = 0;
++  jit_code_event_epilogue_count = 0;
++  last_jit_code_event_kind = v8::kJitCodeEventAll;
++
++  i::v8_flags.allow_natives_syntax = true;
++  isolate->AddJitCodeEventPrologueCallback(JitCodeEventPrologueCallback,
++                                           v8::kJitCodeEventBaseline);
++  isolate->AddJitCodeEventEpilogueCallback(JitCodeEventEpilogueCallback,
++                                           v8::kJitCodeEventBaseline);
++
++  CompileRun("function f(x) { return x + 1; } f(1); %CompileBaseline(f);");
++
++  CHECK_EQ(1, jit_code_event_prologue_count);
++  CHECK_EQ(1, jit_code_event_epilogue_count);
++  CHECK_EQ(v8::kJitCodeEventBaseline, last_jit_code_event_kind);
++
++  isolate->RemoveJitCodeEventPrologueCallback(JitCodeEventPrologueCallback);
++  isolate->RemoveJitCodeEventEpilogueCallback(JitCodeEventEpilogueCallback);
++  i::v8_flags.allow_natives_syntax = false;
++}
++
+ TEST(ContainsOnlyOneByte) {
+   v8::Isolate* isolate = CcTest::isolate();
+   v8::HandleScope scope(isolate);
+-- 
+2.43.0
+

@@ -261,6 +261,7 @@ if grep -q "#include <uchar.h>" src/inspector/string-16.h src/inspector/v8-strin
 else
     echo "remove_uchar_include patch already applied, skipping."
 fi
+node $GITHUB_WORKSPACE/node-script/apply_jit_compile_lifecycle_callbacks_patch.js . $VERSION
 # node $GITHUB_WORKSPACE/node-script/do-gitpatch.js -p $GITHUB_WORKSPACE/patches/enable_wee8_v11.8.172.patch
 
 CXX_SETTING="use_custom_libcxx=false"
